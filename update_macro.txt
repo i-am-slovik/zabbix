@@ -1,0 +1,115 @@
+#!/bin/bash
+
+
+# Check if the correct number of arguments is provided
+if [ "$#" -ne 5 ]; then
+    echo "Usage: $0 <zabbix_user> <zabbix_password> <zabbix_url> <zabbix_hostname> <zabbix_item>"
+    exit 1
+fi
+
+
+# Variables
+ZABBIX_USER="$1"
+ZABBIX_PASSWORD="$2"
+ZABBIX_URL="$3"
+HOSTNAME="$4"
+ZABBIX_ITEM="$5"
+ZABBIX_MACRO="{$SERVICE.TOKEN}"
+
+# Get Zabbix API token
+ZABBIX_TOKEN=$(curl -sk -X POST "$ZABBIX_URL/api_jsonrpc.php" \
+    -H 'Content-Type: application/json' \
+    -d '{
+        "jsonrpc": "2.0",
+        "method": "user.login",
+        "params": {
+            "username": "'"$ZABBIX_USER"'",
+            "password": "'"$ZABBIX_PASSWORD"'"
+        },
+        "id": 1
+    }' | grep -oP '"result":"\K[^"]+')
+
+echo "ZABBIX_TOKEN: $ZABBIX_TOKEN"
+
+# Get Zabbix host ID
+ZABBIX_HOST_ID=$(curl -sk -X POST "$ZABBIX_URL/api_jsonrpc.php" \
+    -H 'Content-Type: application/json' \
+    -d '{
+        "jsonrpc": "2.0",
+        "method": "host.get",
+        "params": {
+            "output": ["hostid"],
+            "filter": {"host": ["'"$HOSTNAME"'"]}
+        },
+        "auth": "'"$ZABBIX_TOKEN"'",
+        "id": 2
+    }' | grep -oP '"hostid":"\K[^"]+')
+
+echo "ZABBIX_HOST_ID: $ZABBIX_HOST_ID"
+
+
+
+# Get Zabbix item ID
+ZABBIX_ITEM_ID=$(curl -sk -X POST "$ZABBIX_URL/api_jsonrpc.php" \
+    -H 'Content-Type: application/json' \
+    -d '{
+        "jsonrpc": "2.0",
+        "method": "item.get",
+        "params": {
+            "output": ["itemid"],
+            "filter": {"name": ["'"$ZABBIX_ITEM"'"], "hostid": ["'"$ZABBIX_HOST_ID"'"]}
+        },
+        "auth": "'"$ZABBIX_TOKEN"'",
+        "id": 3
+    }' | grep -oP '"itemid":"\K[^"]+')
+
+echo "ZABBIX_ITEM_ID: $ZABBIX_ITEM_ID"
+
+
+# Get Zabbix item last value
+ZABBIX_ITEM_LAST_VALUE=$(curl -sk -X POST "$ZABBIX_URL/api_jsonrpc.php" \
+    -H 'Content-Type: application/json' \
+    -d '{
+        "jsonrpc": "2.0",
+        "method": "item.get",
+        "params": {
+            "output": ["lastvalue"],
+            "itemids": ["'"$ZABBIX_ITEM_ID"'"]
+        },
+        "auth": "'"$ZABBIX_TOKEN"'",
+        "id": 4
+    }' | grep -oP '"lastvalue":"\K[^"]+')
+
+echo "ZABBIX_ITEM_LAST_VALUE: $ZABBIX_ITEM_LAST_VALUE"
+
+# Get Zabbix macro ID
+ZABBIX_MACRO_ID=$(curl -sk -X POST "$ZABBIX_URL/api_jsonrpc.php" \
+    -H 'Content-Type: application/json' \
+    -d '{
+        "jsonrpc": "2.0",
+        "method": "usermacro.get",
+        "params": {
+            "output": "extend",
+            "hostids": ["'"$ZABBIX_HOST_ID"'"]
+        },
+        "auth": "'"$ZABBIX_TOKEN"'",
+        "id": 5
+    }'| grep -oP '"hostmacroid":"\K[^"]+(?=","hostid":"[^"]+","macro":"\{\$SERVICE\.TOKEN\}")')
+
+echo ZABBIX_MACRO_ID: $ZABBIX_MACRO_ID
+
+
+# Set Zabbix macro to item value and echo current macro value
+
+curl -sk -X POST "$ZABBIX_URL/api_jsonrpc.php" \
+    -H 'Content-Type: application/json' \
+    -d '{
+        "jsonrpc": "2.0",
+        "method": "usermacro.update",
+        "params": {
+            "hostmacroid": "'"$ZABBIX_MACRO_ID"'",
+            "value": "'"$ZABBIX_ITEM_LAST_VALUE"'"
+        },
+        "auth": "'"$ZABBIX_TOKEN"'",
+        "id": 6
+    }'
